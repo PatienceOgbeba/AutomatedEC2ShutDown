@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Auto-shutdown EC2 on AWS Budget breach via AWS Budgets + SNS + Lambda
+
+Parameters:
+  MonthlyBudgetUSD:
+    Type: Number
+    Default: 50
+    Description: "Monthly budget in USD"
+
+Resources:
+  ### SNS Topic for Budget Alerts ###
+  BudgetAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: BudgetAlarmTopic
+
+  ### IAM Role for Lambda ###
+  LambdaStopRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: StopEC2Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:StopInstances
+                Resource: "*"
+
+  ### Lambda Function ###
+  StopEC2OnBudget:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: StopEC2OnBudget
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaStopRole.Arn
+      Timeout: 120
+      Code:
+        ZipFile: |
+          import boto3, json
+          REGION = boto3.session.Session().region_name
+          def lambda_handler(event, context):
+              # Budget notification payload in event
+              print("Budget notification received:", json.dumps(event))
+              ec2 = boto3.client('ec2', region_name=REGION)
+              resp = ec2.describe_instances(
+                  Filters=[{'Name':'instance-state-name','Values':['running']}])
+              ids = [i['InstanceId']
+                     for r in resp['Reservations']
+                     for i in r['Instances']]
+              if ids:
+                  ec2.stop_instances(InstanceIds=ids)
+                  print("Stopped instances:", ids)
+              else:
+                  print("No running instances.")
+
+  ### Allow SNS to invoke Lambda ###
+  AllowSNSInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StopEC2OnBudget
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref BudgetAlarmTopic
+
+  ### Subscribe Lambda to the SNS topic ###
+  BudgetTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref BudgetAlarmTopic
+      Protocol: lambda
+      Endpoint: !GetAtt StopEC2OnBudget.Arn
+
+  ### AWS Budget ###
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: MonthlySpendLimit
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUSD
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN   # Updated to valid operator
+            Threshold: 100    # percent of budget
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlarmTopic
+
+Outputs:
+  BudgetName:
+    Description: "AWS Budget Name"
+    Value: !Ref MonthlyBudget
+  LambdaName:
+    Description: "Lambda function that stops EC2 on budget breach"
+    Value: !Ref StopEC2OnBudget
+  TopicName:
+    Description: "SNS topic for budget alerts"
+    Value: !Ref BudgetAlarmTopic
