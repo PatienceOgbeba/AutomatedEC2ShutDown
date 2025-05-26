@@ -9,6 +9,12 @@ A financial threshold is defined using AWS Budgets. When that budget is exceeded
 
 ---
 
+## Architecture Diagram
+
+![Architecture Diagram](blank2-diagram.png)
+
+---
+
 ##  Architecture Components
 
 - **AWS Budgets**: Defines a cost threshold and triggers alerts/actions when exceeded.
