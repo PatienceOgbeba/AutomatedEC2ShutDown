@@ -11,7 +11,7 @@ A financial threshold is defined using AWS Budgets. When that budget is exceeded
 
 ## Architecture Diagram
 
-![Architecture Diagram](Screenshot (160).png)
+![Architecture Diagram](Screenshot-(160).png)
 
 ---
 
